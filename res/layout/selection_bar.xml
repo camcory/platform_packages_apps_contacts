@@ -28,7 +28,7 @@
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/action_menu_back_from_search"
         android:layout_gravity="center_vertical|start"
-        android:tint="@android:color/white" />
+        android:tint="@color/selection_close_tint" />
 
     <TextView
         android:id="@+id/selection_count_text"
