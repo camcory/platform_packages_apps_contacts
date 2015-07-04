@@ -19,6 +19,7 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ObjectAnimator;
 import android.animation.PropertyValuesHolder;
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
@@ -32,7 +33,6 @@ import android.view.ViewGroup.MarginLayoutParams;
 import android.widget.FrameLayout.LayoutParams;
 import android.widget.ImageView;
 
-import com.android.contacts.ContactsActivity;
 import com.android.contacts.common.ContactPhotoManager;
 import com.android.contacts.ContactSaveService;
 import com.android.contacts.R;
@@ -44,7 +44,7 @@ import com.android.contacts.util.SchedulingUtils;
 /**
  * Popup activity for choosing a contact photo within the Contacts app.
  */
-public class PhotoSelectionActivity extends ContactsActivity {
+public class PhotoSelectionActivity extends Activity {
 
     private static final String TAG = "PhotoSelectionActivity";
 
@@ -486,7 +486,7 @@ public class PhotoSelectionActivity extends ContactsActivity {
         // from the gallery), but with slightly different wording.
         // Note: don't worry about this being a read-only contact; this code will not be invoked.
         int mode = (mPhotoUri == null) ? PhotoActionPopup.Modes.NO_PHOTO
-                : PhotoActionPopup.Modes.PHOTO_DISALLOW_PRIMARY;
+                : PhotoActionPopup.Modes.WRITE_ABLE_PHOTO;
         // We don't want to provide a choice to remove the photo for two reasons:
         //   1) the UX designs don't call for it
         //   2) even if we wanted to, the implementation would be moderately hairy

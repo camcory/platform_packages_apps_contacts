@@ -14,6 +14,7 @@
      limitations under the License.
 -->
 
+<!-- This should be kept in sync with layout-sw720dp/contact_editor_activity.xml -->
 <ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
