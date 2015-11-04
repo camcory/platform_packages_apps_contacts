@@ -28,10 +28,10 @@ import android.provider.ContactsContract.Contacts;
 import android.provider.ContactsContract.Data;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.android.contacts.GroupMetaDataLoader;
@@ -42,6 +42,7 @@ import com.android.contacts.common.model.dataitem.DataKind;
 import com.android.contacts.common.model.RawContactDelta;
 import com.android.contacts.common.model.ValuesDelta;
 import com.android.contacts.common.model.RawContactModifier;
+
 import com.google.common.base.Objects;
 
 import java.util.ArrayList;
@@ -64,14 +65,19 @@ public class RawContactEditorView extends BaseRawContactEditorView {
 
     private StructuredNameEditorView mName;
     private PhoneticNameEditorView mPhoneticName;
-    private KindSectionView mNickNameSectionView;
+    private TextFieldsEditorView mNickName;
+
     private GroupMembershipView mGroupMembershipView;
 
     private ViewGroup mFields;
 
-    private ImageView mAccountIcon;
-    private TextView mAccountTypeTextView;
-    private TextView mAccountNameTextView;
+    private View mAccountSelector;
+    private TextView mAccountSelectorTypeTextView;
+    private TextView mAccountSelectorNameTextView;
+
+    private View mAccountHeader;
+    private TextView mAccountHeaderTypeTextView;
+    private TextView mAccountHeaderNameTextView;
 
     private long mRawContactId = -1;
     private boolean mAutoAddToDefaultGroup = true;
@@ -128,13 +134,17 @@ public class RawContactEditorView extends BaseRawContactEditorView {
         mPhoneticName = (PhoneticNameEditorView)findViewById(R.id.edit_phonetic_name);
         mPhoneticName.setDeletable(false);
 
-        mNickNameSectionView = (KindSectionView)findViewById(R.id.edit_nick_name);
+        mNickName = (TextFieldsEditorView)findViewById(R.id.edit_nick_name);
 
         mFields = (ViewGroup)findViewById(R.id.sect_fields);
 
-        mAccountIcon = (ImageView) findViewById(R.id.account_icon);
-        mAccountTypeTextView = (TextView) findViewById(R.id.account_type);
-        mAccountNameTextView = (TextView) findViewById(R.id.account_name);
+        mAccountHeader = findViewById(R.id.account_header_container);
+        mAccountHeaderTypeTextView = (TextView) findViewById(R.id.account_type);
+        mAccountHeaderNameTextView = (TextView) findViewById(R.id.account_name);
+
+        mAccountSelector = findViewById(R.id.account_selector_container);
+        mAccountSelectorTypeTextView = (TextView) findViewById(R.id.account_type_selector);
+        mAccountSelectorNameTextView = (TextView) findViewById(R.id.account_name_selector);
     }
 
     @Override
@@ -180,35 +190,31 @@ public class RawContactEditorView extends BaseRawContactEditorView {
         mRawContactId = state.getRawContactId();
 
         // Fill in the account info
-        if (isProfile) {
-            String accountName = state.getAccountName();
-            if (TextUtils.isEmpty(accountName)) {
-                mAccountNameTextView.setVisibility(View.GONE);
-                mAccountTypeTextView.setText(R.string.local_profile_title);
-            } else {
-                CharSequence accountType = type.getDisplayLabel(mContext);
-                mAccountTypeTextView.setText(mContext.getString(R.string.external_profile_title,
-                        accountType));
-                mAccountNameTextView.setText(accountName);
-            }
+        final Pair<String,String> accountInfo = EditorUiUtils.getAccountInfo(getContext(),
+                isProfile, state.getAccountName(), type);
+        if (accountInfo == null) {
+            // Hide this view so the other text view will be centered vertically
+            mAccountHeaderNameTextView.setVisibility(View.GONE);
         } else {
-            String accountName = state.getAccountName();
-            CharSequence accountType = type.getDisplayLabel(mContext);
-            if (TextUtils.isEmpty(accountType)) {
-                accountType = mContext.getString(R.string.account_phone);
-            }
-            if (!TextUtils.isEmpty(accountName)) {
-                mAccountNameTextView.setVisibility(View.VISIBLE);
-                mAccountNameTextView.setText(
-                        mContext.getString(R.string.from_account_format, accountName));
+            if (accountInfo.first == null) {
+                mAccountHeaderNameTextView.setVisibility(View.GONE);
             } else {
-                // Hide this view so the other text view will be centered vertically
-                mAccountNameTextView.setVisibility(View.GONE);
+                mAccountHeaderNameTextView.setVisibility(View.VISIBLE);
+                mAccountHeaderNameTextView.setText(accountInfo.first);
             }
-            mAccountTypeTextView.setText(
-                    mContext.getString(R.string.account_type_format, accountType));
+            mAccountHeaderTypeTextView.setText(accountInfo.second);
         }
-        mAccountIcon.setImageDrawable(type.getDisplayIcon(mContext));
+        updateAccountHeaderContentDescription();
+
+        // The account selector and header are both used to display the same information.
+        mAccountSelectorTypeTextView.setText(mAccountHeaderTypeTextView.getText());
+        mAccountSelectorTypeTextView.setVisibility(mAccountHeaderTypeTextView.getVisibility());
+        mAccountSelectorNameTextView.setText(mAccountHeaderNameTextView.getText());
+        mAccountSelectorNameTextView.setVisibility(mAccountHeaderNameTextView.getVisibility());
+        // Showing the account header at the same time as the account selector drop down is
+        // confusing. They should be mutually exclusive.
+        mAccountHeader.setVisibility(mAccountSelector.getVisibility() == View.GONE
+                ? View.VISIBLE : View.GONE);
 
         // Show photo editor when supported
         RawContactModifier.ensureKindExists(state, type, Photo.CONTENT_ITEM_TYPE);
@@ -246,11 +252,22 @@ public class RawContactEditorView extends BaseRawContactEditorView {
                 mPhoneticName.setValues(
                         type.getKindForMimetype(DataKind.PSEUDO_MIME_TYPE_PHONETIC_NAME),
                         primary, state, false, vig);
-                // Special case for nick name, so it gets inserted in the header section. It
-                // should look like it belongs to the same KindSectionView as the other name fields.
-                mNickNameSectionView.setEnabled(isEnabled());
-                mNickNameSectionView.setState(type.getKindForMimetype(Nickname.CONTENT_ITEM_TYPE),
-                        state, false, vig);
+                // It is useful to use Nickname outside of a KindSectionView so that we can treat it
+                // as a part of StructuredName's fake KindSectionView, even though it uses a
+                // different CP2 mime-type. We do a bit of extra work below to make this possible.
+                final DataKind nickNameKind = type.getKindForMimetype(Nickname.CONTENT_ITEM_TYPE);
+                if (nickNameKind != null) {
+                    ValuesDelta primaryNickNameEntry = state.getPrimaryEntry(nickNameKind.mimeType);
+                    if (primaryNickNameEntry == null) {
+                        primaryNickNameEntry = RawContactModifier.insertChild(state, nickNameKind);
+                    }
+                    mNickName.setValues(nickNameKind, primaryNickNameEntry, state, false, vig);
+                    mNickName.setDeletable(false);
+                } else {
+                    mPhoneticName.setPadding(0, 0, 0, (int) getResources().getDimension(
+                            R.dimen.editor_padding_between_editor_views));
+                    mNickName.setVisibility(View.GONE);
+                }
             } else if (Photo.CONTENT_ITEM_TYPE.equals(mimeType)) {
                 // Handle special case editor for photos
                 final ValuesDelta primary = state.getPrimaryEntry(mimeType);
@@ -270,8 +287,9 @@ public class RawContactEditorView extends BaseRawContactEditorView {
                 if (kind.fieldList == null) continue;
                 final KindSectionView section = (KindSectionView)mInflater.inflate(
                         R.layout.item_kind_section, mFields, false);
+                section.setShowOneEmptyEditor(true);
                 section.setEnabled(isEnabled());
-                section.setState(kind, state, false, vig);
+                section.setState(kind, state, /* readOnly =*/ false, vig);
                 mFields.addView(section);
             }
         }
@@ -358,6 +376,10 @@ public class RawContactEditorView extends BaseRawContactEditorView {
 
     public TextFieldsEditorView getPhoneticNameEditor() {
         return mPhoneticName;
+    }
+
+    public TextFieldsEditorView getNickNameEditor() {
+        return mNickName;
     }
 
     @Override

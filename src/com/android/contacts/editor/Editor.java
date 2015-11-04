@@ -49,6 +49,9 @@ public interface Editor {
         // The editor has switched between different representations of the same
         // data, e.g. from full name to structured name
         public static final int EDITOR_FORM_CHANGED = 5;
+
+        // Focus has changed inside the editor.
+        public static final int EDITOR_FOCUS_CHANGED = 6;
     }
 
     /**
@@ -78,7 +81,13 @@ public interface Editor {
     public void onFieldChanged(String column, String value);
 
     /**
-     * Performs the delete operation for this {@link Editor}.
+     * Marks the underlying ValuesDelta as deleted, but does not update the view.
+     */
+    public void markDeleted();
+
+    /**
+     * Performs the delete operation for this {@link Editor}, which involves both
+     * marking the underlying ValuesDelta as deleted and updating the view.
      */
     public void deleteEditor();
 

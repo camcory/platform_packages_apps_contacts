@@ -29,6 +29,10 @@
     <color name="actionbar_background_color">@color/primary_color</color>
     <color name="actionbar_background_color_dark">@color/primary_color_dark</color>
 
+    <color name="contextual_selection_bar_color">#616161</color>
+    <!-- Color of the status bar above the contextual selection bar. -->
+    <color name="contextual_selection_bar_status_bar_color">#424242</color>
+
     <color name="primary_color_dark">#0277bd</color>
     <color name="primary_color">#0288d1</color>
 
@@ -37,8 +41,8 @@
 
     <color name="floating_action_button_icon_color">@color/contacts_accent_color</color>
 
-    <!-- Color of the separator between entries in an ExpandingEntryCardView -->
-    <color name="expanding_entry_card_item_separator_color">#e4e4e4</color>
+    <!-- Horizontal separator line should be 12% dark in the light theme. -->
+    <color name="divider_line_color_light">#e0e0e0</color>
 
     <!-- Color of the text on an ExpandingEntryCard button -->
     <color name="expanding_entry_card_button_text_color">@android:color/black</color>
@@ -57,4 +61,7 @@
 
     <!-- Color of the mime-type icons inside the editor. 50% black. -->
     <color name="editor_icon_color">#7f7f7f</color>
+
+    <!-- Color of disabled text and unfocused hint text inside the contact editor. 25% black. -->
+    <color name="editor_disabled_text_color">#40000000</color>
 </resources>

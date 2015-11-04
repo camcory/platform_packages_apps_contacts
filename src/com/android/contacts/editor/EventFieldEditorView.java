@@ -52,7 +52,7 @@ public class EventFieldEditorView extends LabeledEditorView {
      */
     private String mNoDateString;
     private int mPrimaryTextColor;
-    private int mSecondaryTextColor;
+    private int mHintTextColor;
 
     private Button mDateView;
 
@@ -73,15 +73,18 @@ public class EventFieldEditorView extends LabeledEditorView {
     protected void onFinishInflate() {
         super.onFinishInflate();
 
-        Resources resources = mContext.getResources();
+        Resources resources = getContext().getResources();
         mPrimaryTextColor = resources.getColor(R.color.primary_text_color);
-        mSecondaryTextColor = resources.getColor(R.color.secondary_text_color);
-        mNoDateString = mContext.getString(R.string.event_edit_field_hint_text);
+        mHintTextColor = resources.getColor(R.color.editor_disabled_text_color);
+        mNoDateString = getContext().getString(R.string.event_edit_field_hint_text);
 
         mDateView = (Button) findViewById(R.id.date_view);
         mDateView.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (!isTypeVisible()) {
+                    showType();
+                }
                 showDialog(R.id.dialog_event_date_picker);
             }
         });
@@ -123,12 +126,15 @@ public class EventFieldEditorView extends LabeledEditorView {
                 false /*Use the short DateFormat to ensure that it fits inside the EditText*/);
         if (TextUtils.isEmpty(data)) {
             mDateView.setText(mNoDateString);
-            mDateView.setTextColor(mSecondaryTextColor);
+            mDateView.setTextColor(mHintTextColor);
             setDeleteButtonVisible(false);
         } else {
             mDateView.setText(data);
             mDateView.setTextColor(mPrimaryTextColor);
             setDeleteButtonVisible(true);
+            if (!isTypeVisible()) {
+                showType();
+            }
         }
     }
 
@@ -167,7 +173,7 @@ public class EventFieldEditorView extends LabeledEditorView {
         final int defaultYear = calendar.get(Calendar.YEAR);
 
         // Check whether the year is optional
-        final boolean isYearOptional = getType().isYearOptional();
+        final boolean isYearOptional = getType() != null && getType().isYearOptional();
 
         if (!isYearOptional && !TextUtils.isEmpty(oldValue)) {
             final ParsePosition position = new ParsePosition(0);
@@ -256,7 +262,7 @@ public class EventFieldEditorView extends LabeledEditorView {
     public void clearAllFields() {
         // Update UI
         mDateView.setText(mNoDateString);
-        mDateView.setTextColor(mSecondaryTextColor);
+        mDateView.setTextColor(mHintTextColor);
 
         // Update state
         final String column = getKind().fieldList.get(0).column;

@@ -53,7 +53,6 @@ public class PhotoEditorView extends LinearLayout implements Editor {
     private ContactPhotoManager mContactPhotoManager;
 
     private boolean mHasSetPhoto = false;
-    private boolean mReadOnly;
 
     public PhotoEditorView(Context context) {
         super(context);
@@ -78,18 +77,21 @@ public class PhotoEditorView extends LinearLayout implements Editor {
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
-        mContactPhotoManager = ContactPhotoManager.getInstance(mContext);
+        mContactPhotoManager = ContactPhotoManager.getInstance(getContext());
         mPhotoImageView = (ImageView) findViewById(R.id.photo);
         mPrimaryCheckBox = (RadioButton) findViewById(R.id.primary_checkbox);
         mChangeButton = (Button) findViewById(R.id.change_button);
-        mChangeButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (mListener != null) {
-                    mListener.onRequest(EditorListener.REQUEST_PICK_PHOTO);
+        mPrimaryCheckBox = (RadioButton) findViewById(R.id.primary_checkbox);
+        if (mChangeButton != null) {
+            mChangeButton.setOnClickListener(new OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (mListener != null) {
+                        mListener.onRequest(EditorListener.REQUEST_PICK_PHOTO);
+                    }
                 }
-            }
-        });
+            });
+        }
         // Turn off own state management. We do this ourselves on rotation.
         mPrimaryCheckBox.setSaveEnabled(false);
         mPrimaryCheckBox.setOnClickListener(new OnClickListener() {
@@ -113,7 +115,6 @@ public class PhotoEditorView extends LinearLayout implements Editor {
     public void setValues(DataKind kind, ValuesDelta values, RawContactDelta state, boolean readOnly,
             ViewIdGenerator vig) {
         mEntry = values;
-        mReadOnly = readOnly;
 
         setId(vig.getId(state, kind, values, 0));
 
@@ -248,6 +249,11 @@ public class PhotoEditorView extends LinearLayout implements Editor {
     @Override
     public boolean isEmpty() {
         return !mHasSetPhoto;
+    }
+
+    @Override
+    public void markDeleted() {
+        // Photo is not deletable
     }
 
     @Override

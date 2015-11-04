@@ -116,6 +116,9 @@ public class GroupMembershipView extends LinearLayout
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
             final View itemView = super.getView(position, convertView, parent);
+            if (itemView == null) {
+                return null;
+            }
 
             // Hide the checkable drawable.  This assumes that the item views
             // are CheckedTextView objects
@@ -123,6 +126,7 @@ public class GroupMembershipView extends LinearLayout
             if (!getItemIsCheckable(position)) {
                 checkedTextView.setCheckMarkDrawable(null);
             }
+            checkedTextView.setTextColor(mPrimaryTextColor);
 
             return checkedTextView;
         }
@@ -145,7 +149,7 @@ public class GroupMembershipView extends LinearLayout
 
     private String mNoGroupString;
     private int mPrimaryTextColor;
-    private int mSecondaryTextColor;
+    private int mHintTextColor;
 
     public GroupMembershipView(Context context) {
         super(context);
@@ -158,10 +162,10 @@ public class GroupMembershipView extends LinearLayout
     @Override
     protected void onFinishInflate() {
         super.onFinishInflate();
-        Resources resources = mContext.getResources();
+        Resources resources = getContext().getResources();
         mPrimaryTextColor = resources.getColor(R.color.primary_text_color);
-        mSecondaryTextColor = resources.getColor(R.color.secondary_text_color);
-        mNoGroupString = mContext.getString(R.string.group_edit_field_hint_text);
+        mHintTextColor = resources.getColor(R.color.editor_disabled_text_color);
+        mNoGroupString = getContext().getString(R.string.group_edit_field_hint_text);
     }
 
     @Override
@@ -266,7 +270,7 @@ public class GroupMembershipView extends LinearLayout
         mGroupList.setEnabled(isEnabled());
         if (sb.length() == 0) {
             mGroupList.setText(mNoGroupString);
-            mGroupList.setTextColor(mSecondaryTextColor);
+            mGroupList.setTextColor(mHintTextColor);
         } else {
             mGroupList.setText(sb);
             mGroupList.setTextColor(mPrimaryTextColor);

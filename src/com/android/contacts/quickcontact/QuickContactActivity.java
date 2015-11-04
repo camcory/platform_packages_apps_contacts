@@ -40,14 +40,11 @@ import android.graphics.PorterDuffColorFilter;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
-import android.net.ParseException;
 import android.net.Uri;
-import android.net.WebAddress;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Trace;
 import android.provider.CalendarContract;
-import android.provider.ContactsContract;
 import android.provider.ContactsContract.CommonDataKinds.Email;
 import android.provider.ContactsContract.CommonDataKinds.Event;
 import android.provider.ContactsContract.CommonDataKinds.GroupMembership;
@@ -98,6 +95,7 @@ import com.android.contacts.common.CallUtil;
 import com.android.contacts.common.ClipboardUtils;
 import com.android.contacts.common.Collapser;
 import com.android.contacts.common.ContactsUtils;
+import com.android.contacts.common.activity.RequestPermissionsActivity;
 import com.android.contacts.common.editor.SelectAccountDialogFragment;
 import com.android.contacts.common.interactions.TouchPointManager;
 import com.android.contacts.common.lettertiles.LetterTileDrawable;
@@ -123,12 +121,14 @@ import com.android.contacts.common.model.dataitem.SipAddressDataItem;
 import com.android.contacts.common.model.dataitem.StructuredNameDataItem;
 import com.android.contacts.common.model.dataitem.StructuredPostalDataItem;
 import com.android.contacts.common.model.dataitem.WebsiteDataItem;
+import com.android.contacts.common.util.ImplicitIntentsUtil;
 import com.android.contacts.common.util.DateUtils;
 import com.android.contacts.common.util.MaterialColorMapUtils;
 import com.android.contacts.common.util.MaterialColorMapUtils.MaterialPalette;
 import com.android.contacts.common.util.ViewUtil;
 import com.android.contacts.detail.ContactDisplayUtils;
 import com.android.contacts.editor.ContactEditorFragment;
+import com.android.contacts.editor.EditorIntents;
 import com.android.contacts.interactions.CalendarInteractionsLoader;
 import com.android.contacts.interactions.CallLogInteractionsLoader;
 import com.android.contacts.interactions.ContactDeletionInteraction;
@@ -138,6 +138,7 @@ import com.android.contacts.quickcontact.ExpandingEntryCardView.Entry;
 import com.android.contacts.quickcontact.ExpandingEntryCardView.EntryContextMenuInfo;
 import com.android.contacts.quickcontact.ExpandingEntryCardView.EntryTag;
 import com.android.contacts.quickcontact.ExpandingEntryCardView.ExpandingEntryCardViewListener;
+import com.android.contacts.quickcontact.WebAddress.ParseException;
 import com.android.contacts.util.ImageViewDrawableSetter;
 import com.android.contacts.util.PhoneCapabilityTester;
 import com.android.contacts.util.SchedulingUtils;
@@ -145,9 +146,11 @@ import com.android.contacts.util.StructuredPostalUtils;
 import com.android.contacts.widget.MultiShrinkScroller;
 import com.android.contacts.widget.MultiShrinkScroller.MultiShrinkScrollerListener;
 import com.android.contacts.widget.QuickContactImageView;
-import com.google.common.base.Preconditions;
+import com.android.contactsbind.HelpUtils;
+
 import com.google.common.collect.Lists;
 
+import java.lang.SecurityException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -157,6 +160,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Mostly translucent {@link Activity} that shows QuickContact dialog. It loads
@@ -207,6 +211,7 @@ public class QuickContactActivity extends ContactsActivity {
     private Uri mLookupUri;
     private String[] mExcludeMimes;
     private int mExtraMode;
+    private String mExtraPrioritizedMimeType;
     private int mStatusBarColor;
     private boolean mHasAlreadyBeenOpened;
     private boolean mOnlyOnePhoneNumber;
@@ -246,6 +251,7 @@ public class QuickContactActivity extends ContactsActivity {
     private Contact mContactData;
     private ContactLoader mContactLoader;
     private PorterDuffColorFilter mColorFilter;
+    private int mColorFilterColor;
 
     private final ImageViewDrawableSetter mPhotoSetter = new ImageViewDrawableSetter();
 
@@ -307,7 +313,13 @@ public class QuickContactActivity extends ContactsActivity {
         LOADER_SMS_ID,
         LOADER_CALENDAR_ID,
         LOADER_CALL_LOG_ID};
-    private Map<Integer, List<ContactInteraction>> mRecentLoaderResults = new HashMap<>();
+    /**
+     * ConcurrentHashMap constructor params: 4 is initial table size, 0.9f is
+     * load factor before resizing, 1 means we only expect a single thread to
+     * write to the map so make only a single shard
+     */
+    private Map<Integer, List<ContactInteraction>> mRecentLoaderResults =
+        new ConcurrentHashMap<>(4, 0.9f, 1);
 
     private static final String FRAGMENT_TAG_SELECT_ACCOUNT = "select_account_fragment";
 
@@ -328,6 +340,31 @@ public class QuickContactActivity extends ContactsActivity {
                 return;
             }
 
+            // Pass the touch point through the intent for use in the InCallUI
+            if (Intent.ACTION_CALL.equals(intent.getAction())) {
+                if (TouchPointManager.getInstance().hasValidPoint()) {
+                    Bundle extras = new Bundle();
+                    extras.putParcelable(TouchPointManager.TOUCH_POINT,
+                            TouchPointManager.getInstance().getPoint());
+                    intent.putExtra(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, extras);
+                }
+            }
+
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            mHasIntentLaunched = true;
+            try {
+                startActivity(intent);
+            } catch (SecurityException ex) {
+                Toast.makeText(QuickContactActivity.this, R.string.missing_app,
+                        Toast.LENGTH_SHORT).show();
+                Log.e(TAG, "QuickContacts does not have permission to launch "
+                        + intent);
+            } catch (ActivityNotFoundException ex) {
+                Toast.makeText(QuickContactActivity.this, R.string.missing_app,
+                        Toast.LENGTH_SHORT).show();
+            }
+
             // Default to USAGE_TYPE_CALL. Usage is summed among all types for sorting each data id
             // so the exact usage type is not necessary in all cases
             String usageType = DataUsageFeedback.USAGE_TYPE_CALL;
@@ -345,10 +382,14 @@ public class QuickContactActivity extends ContactsActivity {
                         .appendPath(String.valueOf(dataId))
                         .appendQueryParameter(DataUsageFeedback.USAGE_TYPE, usageType)
                         .build();
-                final boolean successful = getContentResolver().update(
-                        dataUsageUri, new ContentValues(), null, null) > 0;
-                if (!successful) {
-                    Log.w(TAG, "DataUsageFeedback increment failed");
+                try {
+                    final boolean successful = getContentResolver().update(
+                            dataUsageUri, new ContentValues(), null, null) > 0;
+                    if (!successful) {
+                        Log.w(TAG, "DataUsageFeedback increment failed");
+                    }
+                } catch (SecurityException ex) {
+                    Log.w(TAG, "DataUsageFeedback increment failed", ex);
                 }
             } else {
                 Log.w(TAG, "Invalid Data ID");
@@ -368,7 +409,12 @@ public class QuickContactActivity extends ContactsActivity {
 
             mHasIntentLaunched = true;
             try {
-                startActivity(intent);
+                ImplicitIntentsUtil.startActivityInAppIfPossible(QuickContactActivity.this, intent);
+            } catch (SecurityException ex) {
+                Toast.makeText(QuickContactActivity.this, R.string.missing_app,
+                        Toast.LENGTH_SHORT).show();
+                Log.e(TAG, "QuickContacts does not have permission to launch "
+                        + intent);
             } catch (ActivityNotFoundException ex) {
                 Toast.makeText(QuickContactActivity.this, R.string.missing_app,
                         Toast.LENGTH_SHORT).show();
@@ -384,8 +430,13 @@ public class QuickContactActivity extends ContactsActivity {
         }
 
         @Override
-        public void onExpand(int heightDelta) {
-            mScroller.prepareForExpandingScrollChild();
+        public void onExpand() {
+            mScroller.setDisableTouchesForSuppressLayout(/* areTouchesDisabled = */ true);
+        }
+
+        @Override
+        public void onExpandDone() {
+            mScroller.setDisableTouchesForSuppressLayout(/* areTouchesDisabled = */ false);
         }
     };
 
@@ -568,16 +619,31 @@ public class QuickContactActivity extends ContactsActivity {
 
     /**
      * Sorts among different mimetypes based off:
-     * 1. Times used
-     * 2. Last time used
-     * 3. Statically defined
+     * 1. Whether one of the mimetypes is the prioritized mimetype
+     * 2. Number of times used
+     * 3. Last time used
+     * 4. Statically defined
      */
     private final Comparator<List<DataItem>> mAmongstMimeTypeDataItemComparator =
             new Comparator<List<DataItem>> () {
         @Override
         public int compare(List<DataItem> lhsList, List<DataItem> rhsList) {
-            DataItem lhs = lhsList.get(0);
-            DataItem rhs = rhsList.get(0);
+            final DataItem lhs = lhsList.get(0);
+            final DataItem rhs = rhsList.get(0);
+            final String lhsMimeType = lhs.getMimeType();
+            final String rhsMimeType = rhs.getMimeType();
+
+            // 1. Whether one of the mimetypes is the prioritized mimetype
+            if (!TextUtils.isEmpty(mExtraPrioritizedMimeType) && !lhsMimeType.equals(rhsMimeType)) {
+                if (rhsMimeType.equals(mExtraPrioritizedMimeType)) {
+                    return 1;
+                }
+                if (lhsMimeType.equals(mExtraPrioritizedMimeType)) {
+                    return -1;
+                }
+            }
+
+            // 2. Number of times used
             final int lhsTimesUsed = lhs.getTimesUsed() == null ? 0 : lhs.getTimesUsed();
             final int rhsTimesUsed = rhs.getTimesUsed() == null ? 0 : rhs.getTimesUsed();
             final int timesUsedDifference = rhsTimesUsed - lhsTimesUsed;
@@ -585,6 +651,7 @@ public class QuickContactActivity extends ContactsActivity {
                 return timesUsedDifference;
             }
 
+            // 3. Last time used
             final long lhsLastTimeUsed =
                     lhs.getLastTimeUsed() == null ? 0 : lhs.getLastTimeUsed();
             final long rhsLastTimeUsed =
@@ -596,14 +663,14 @@ public class QuickContactActivity extends ContactsActivity {
                 return -1;
             }
 
-            // Times used and last time used are the same. Resort to statically defined.
-            final String lhsMimeType = lhs.getMimeType();
-            final String rhsMimeType = rhs.getMimeType();
-            for (String mimeType : LEADING_MIMETYPES) {
-                if (lhsMimeType.equals(mimeType)) {
-                    return -1;
-                } else if (rhsMimeType.equals(mimeType)) {
-                    return 1;
+            // 4. Resort to a statically defined mimetype order.
+            if (!lhsMimeType.equals(rhsMimeType)) {
+                for (String mimeType : LEADING_MIMETYPES) {
+                    if (lhsMimeType.equals(mimeType)) {
+                        return -1;
+                    } else if (rhsMimeType.equals(mimeType)) {
+                        return 1;
+                    }
                 }
             }
             return 0;
@@ -622,6 +689,10 @@ public class QuickContactActivity extends ContactsActivity {
     protected void onCreate(Bundle savedInstanceState) {
         Trace.beginSection("onCreate()");
         super.onCreate(savedInstanceState);
+
+        if (RequestPermissionsActivity.startPermissionActivity(this)) {
+            return;
+        }
 
         getWindow().setStatusBarColor(Color.TRANSPARENT);
 
@@ -769,7 +840,7 @@ public class QuickContactActivity extends ContactsActivity {
     public void onSaveInstanceState(Bundle savedInstanceState) {
         super.onSaveInstanceState(savedInstanceState);
         if (mColorFilter != null) {
-            savedInstanceState.putInt(KEY_THEME_COLOR, mColorFilter.getColor());
+            savedInstanceState.putInt(KEY_THEME_COLOR, mColorFilterColor);
         }
     }
 
@@ -786,11 +857,15 @@ public class QuickContactActivity extends ContactsActivity {
             lookupUri = RawContacts.getContactLookupUri(getContentResolver(),
                     ContentUris.withAppendedId(RawContacts.CONTENT_URI, rawContactId));
         }
-        mExtraMode = getIntent().getIntExtra(QuickContact.EXTRA_MODE,
-                QuickContact.MODE_LARGE);
+        mExtraMode = getIntent().getIntExtra(QuickContact.EXTRA_MODE, QuickContact.MODE_LARGE);
+        mExtraPrioritizedMimeType = getIntent().getStringExtra(QuickContact.EXTRA_PRIORITIZED_MIMETYPE);
         final Uri oldLookupUri = mLookupUri;
 
-        mLookupUri = Preconditions.checkNotNull(lookupUri, "missing lookupUri");
+        if (lookupUri == null) {
+            finish();
+            return;
+        }
+        mLookupUri = lookupUri;
         mExcludeMimes = intent.getStringArrayExtra(QuickContact.EXTRA_EXCLUDE_MIMES);
         if (oldLookupUri == null) {
             mContactLoader = (ContactLoader) getLoaderManager().initLoader(
@@ -865,8 +940,16 @@ public class QuickContactActivity extends ContactsActivity {
         mPhotoView.setIsBusiness(mContactData.isDisplayNameFromOrganization());
         mPhotoSetter.setupContactPhoto(data, mPhotoView);
         extractAndApplyTintFromPhotoViewAsynchronously();
-        analyzeWhitenessOfPhotoAsynchronously();
-        setHeaderNameText(ContactDisplayUtils.getDisplayName(this, data).toString());
+        String phoneticName = ContactDisplayUtils.getPhoneticName(this, data);
+        String displayName = ContactDisplayUtils.getDisplayName(this, data).toString();
+        if (mContactData.getDisplayNameSource() != DisplayNameSources.STRUCTURED_PHONETIC_NAME
+                && !TextUtils.isEmpty(phoneticName)) {
+            displayName = getResources().getString(
+                    R.string.quick_contact_display_name_with_phonetic, displayName, phoneticName);
+            setHeaderNameText(displayName);
+        } else {
+            setHeaderNameText(displayName);
+        }
 
         Trace.endSection();
 
@@ -1011,12 +1094,17 @@ public class QuickContactActivity extends ContactsActivity {
         final String customAboutCardName = cp2DataCardModel.customAboutCardName;
 
         if (contactCardEntries.size() > 0) {
+            final boolean firstEntriesArePrioritizedMimeType =
+                    !TextUtils.isEmpty(mExtraPrioritizedMimeType) &&
+                    mCachedCp2DataCardModel.dataItemsMap.containsKey(mExtraPrioritizedMimeType) &&
+                    mCachedCp2DataCardModel.dataItemsMap.get(mExtraPrioritizedMimeType).size() != 0;
             mContactCard.initialize(contactCardEntries,
                     /* numInitialVisibleEntries = */ MIN_NUM_CONTACT_ENTRIES_SHOWN,
                     /* isExpanded = */ mContactCard.isExpanded(),
                     /* isAlwaysExpanded = */ false,
                     mExpandingEntryCardViewListener,
-                    mScroller);
+                    mScroller,
+                    firstEntriesArePrioritizedMimeType);
             mContactCard.setVisibility(View.VISIBLE);
         } else {
             mContactCard.setVisibility(View.GONE);
@@ -1063,14 +1151,12 @@ public class QuickContactActivity extends ContactsActivity {
             mAboutCard.setTitle(customAboutCardName);
         }
 
-        if (aboutCardEntries.size() > 0) {
-            mAboutCard.initialize(aboutCardEntries,
-                    /* numInitialVisibleEntries = */ 1,
-                    /* isExpanded = */ true,
-                    /* isAlwaysExpanded = */ true,
-                    mExpandingEntryCardViewListener,
-                    mScroller);
-        }
+        mAboutCard.initialize(aboutCardEntries,
+                /* numInitialVisibleEntries = */ 1,
+                /* isExpanded = */ true,
+                /* isAlwaysExpanded = */ true,
+                mExpandingEntryCardViewListener,
+                mScroller);
 
         if (contactCardEntries.size() == 0 && aboutCardEntries.size() == 0) {
             initializeNoContactDetailCard();
@@ -1347,15 +1433,16 @@ public class QuickContactActivity extends ContactsActivity {
             entryContextMenuInfo = new EntryContextMenuInfo(subHeader, header,
                     dataItem.getMimeType(), dataItem.getId(), dataItem.isSuperPrimary());
             try {
-                final WebAddress webAddress = new WebAddress(website.buildDataString(context,
-                        kind));
+                final WebAddress webAddress = new WebAddress(website.buildDataStringForDisplay
+                        (context, kind));
                 intent = new Intent(Intent.ACTION_VIEW, Uri.parse(webAddress.toString()));
             } catch (final ParseException e) {
-                Log.e(TAG, "Couldn't parse website: " + website.buildDataString(context, kind));
+                Log.e(TAG, "Couldn't parse website: " + website.buildDataStringForDisplay(
+                        context, kind));
             }
         } else if (dataItem instanceof EventDataItem) {
             final EventDataItem event = (EventDataItem) dataItem;
-            final String dataString = event.buildDataString(context, kind);
+            final String dataString = event.buildDataStringForDisplay(context, kind);
             final Calendar cal = DateUtils.parseDate(dataString, false);
             if (cal != null) {
                 final Date nextAnniversary =
@@ -1375,7 +1462,7 @@ public class QuickContactActivity extends ContactsActivity {
                     dataItem.getMimeType(), dataItem.getId(), dataItem.isSuperPrimary());
         } else if (dataItem instanceof RelationDataItem) {
             final RelationDataItem relation = (RelationDataItem) dataItem;
-            final String dataString = relation.buildDataString(context, kind);
+            final String dataString = relation.buildDataStringForDisplay(context, kind);
             if (!TextUtils.isEmpty(dataString)) {
                 intent = new Intent(Intent.ACTION_SEARCH);
                 intent.putExtra(SearchManager.QUERY, dataString);
@@ -1394,15 +1481,20 @@ public class QuickContactActivity extends ContactsActivity {
             final PhoneDataItem phone = (PhoneDataItem) dataItem;
             if (!TextUtils.isEmpty(phone.getNumber())) {
                 primaryContentDescription.append(res.getString(R.string.call_other)).append(" ");
-                header = sBidiFormatter.unicodeWrap(phone.buildDataString(context, kind),
+                header = sBidiFormatter.unicodeWrap(phone.buildDataStringForDisplay(context, kind),
                         TextDirectionHeuristics.LTR);
                 entryContextMenuInfo = new EntryContextMenuInfo(header,
                         res.getString(R.string.phoneLabelsGroup), dataItem.getMimeType(),
                         dataItem.getId(), dataItem.isSuperPrimary());
                 if (phone.hasKindTypeColumn(kind)) {
-                    text = Phone.getTypeLabel(res, phone.getKindTypeColumn(kind),
-                            phone.getLabel()).toString();
-                    primaryContentDescription.append(text).append(" ");
+                    final int kindTypeColumn = phone.getKindTypeColumn(kind);
+                    final String label = phone.getLabel();
+                    if (kindTypeColumn == Phone.TYPE_CUSTOM && TextUtils.isEmpty(label)) {
+                        text = "";
+                    } else {
+                        text = Phone.getTypeLabel(res, kindTypeColumn, label).toString();
+                        primaryContentDescription.append(text).append(" ");
+                    }
                 }
                 primaryContentDescription.append(header);
                 icon = res.getDrawable(R.drawable.ic_phone_24dp);
@@ -1493,12 +1585,17 @@ public class QuickContactActivity extends ContactsActivity {
                 iconResourceId = R.drawable.ic_dialer_sip_black_24dp;
             }
         } else if (dataItem instanceof StructuredNameDataItem) {
-            final String givenName = ((StructuredNameDataItem) dataItem).getGivenName();
-            if (!TextUtils.isEmpty(givenName)) {
-                aboutCardName.value = res.getString(R.string.about_card_title) +
-                        " " + givenName;
-            } else {
-                aboutCardName.value = res.getString(R.string.about_card_title);
+            // If the name is already set and this is not the super primary value then leave the
+            // current value. This way we show the super primary value when we are able to.
+            if (dataItem.isSuperPrimary() || aboutCardName.value == null
+                    || aboutCardName.value.isEmpty()) {
+                final String givenName = ((StructuredNameDataItem) dataItem).getGivenName();
+                if (!TextUtils.isEmpty(givenName)) {
+                    aboutCardName.value = res.getString(R.string.about_card_title) +
+                            " " + givenName;
+                } else {
+                    aboutCardName.value = res.getString(R.string.about_card_title);
+                }
             }
         } else {
             // Custom DataItem
@@ -1768,7 +1865,7 @@ public class QuickContactActivity extends ContactsActivity {
             @Override
             protected MaterialPalette doInBackground(Void... params) {
 
-                if (imageViewDrawable instanceof BitmapDrawable
+                if (imageViewDrawable instanceof BitmapDrawable && mContactData != null
                         && mContactData.getThumbnailPhotoBinaryData() != null
                         && mContactData.getThumbnailPhotoBinaryData().length > 0) {
                     // Perform the color analysis on the thumbnail instead of the full sized
@@ -1815,42 +1912,18 @@ public class QuickContactActivity extends ContactsActivity {
         }.execute();
     }
 
-    /**
-     * Examine how many white pixels are in the bitmap in order to determine whether or not
-     * we need gradient overlays on top of the image.
-     */
-    private void analyzeWhitenessOfPhotoAsynchronously() {
-        final Drawable imageViewDrawable = mPhotoView.getDrawable();
-        new AsyncTask<Void, Void, Boolean>() {
-            @Override
-            protected Boolean doInBackground(Void... params) {
-                if (imageViewDrawable instanceof BitmapDrawable) {
-                    final Bitmap bitmap = ((BitmapDrawable) imageViewDrawable).getBitmap();
-                    return WhitenessUtils.isBitmapWhiteAtTopOrBottom(bitmap);
-                }
-                return !(imageViewDrawable instanceof LetterTileDrawable);
-            }
-
-            @Override
-            protected void onPostExecute(Boolean isWhite) {
-                super.onPostExecute(isWhite);
-                mScroller.setUseGradient(isWhite);
-            }
-        }.execute();
-    }
-
     private void setThemeColor(MaterialPalette palette) {
         // If the color is invalid, use the predefined default
-        final int primaryColor = palette.mPrimaryColor;
-        mScroller.setHeaderTintColor(primaryColor);
+        mColorFilterColor = palette.mPrimaryColor;
+        mScroller.setHeaderTintColor(mColorFilterColor);
         mStatusBarColor = palette.mSecondaryColor;
         updateStatusBarColor();
 
         mColorFilter =
-                new PorterDuffColorFilter(primaryColor, PorterDuff.Mode.SRC_ATOP);
-        mContactCard.setColorAndFilter(primaryColor, mColorFilter);
-        mRecentCard.setColorAndFilter(primaryColor, mColorFilter);
-        mAboutCard.setColorAndFilter(primaryColor, mColorFilter);
+                new PorterDuffColorFilter(mColorFilterColor, PorterDuff.Mode.SRC_ATOP);
+        mContactCard.setColorAndFilter(mColorFilterColor, mColorFilter);
+        mRecentCard.setColorAndFilter(mColorFilterColor, mColorFilter);
+        mAboutCard.setColorAndFilter(mColorFilterColor, mColorFilter);
     }
 
     private void updateStatusBarColor() {
@@ -1885,6 +1958,9 @@ public class QuickContactActivity extends ContactsActivity {
     private List<Entry> contactInteractionsToEntries(List<ContactInteraction> interactions) {
         final List<Entry> entries = new ArrayList<>();
         for (ContactInteraction interaction : interactions) {
+            if (interaction == null) {
+                continue;
+            }
             entries.add(new Entry(/* id = */ -1,
                     interaction.getIcon(this),
                     interaction.getViewHeader(this),
@@ -1924,9 +2000,13 @@ public class QuickContactActivity extends ContactsActivity {
                     return;
                 }
                 if (data.isError()) {
-                    // This shouldn't ever happen, so throw an exception. The {@link ContactLoader}
-                    // should log the actual exception.
-                    throw new IllegalStateException("Failed to load contact", data.getException());
+                    // This means either the contact is invalid or we had an
+                    // internal error such as an acore crash.
+                    Log.i(TAG, "Failed to load contact: " + ((ContactLoader)loader).getLookupUri());
+                    Toast.makeText(QuickContactActivity.this, R.string.invalidContactMessage,
+                            Toast.LENGTH_LONG).show();
+                    finish();
+                    return;
                 }
                 if (data.isNotFound()) {
                     Log.i(TAG, "No contact found: " + ((ContactLoader)loader).getLookupUri());
@@ -2035,20 +2115,37 @@ public class QuickContactActivity extends ContactsActivity {
         final List<ContactInteraction> allInteractions = new ArrayList<>();
         final List<List<Entry>> interactionsWrapper = new ArrayList<>();
 
+        // Serialize mRecentLoaderResults into a single list. This should be done on the main
+        // thread to avoid races against mRecentLoaderResults edits.
+        for (List<ContactInteraction> loaderInteractions : mRecentLoaderResults.values()) {
+            allInteractions.addAll(loaderInteractions);
+        }
+
         mRecentDataTask = new AsyncTask<Void, Void, Void>() {
             @Override
             protected Void doInBackground(Void... params) {
                 Trace.beginSection("sort recent loader results");
 
-                for (List<ContactInteraction> loaderInteractions : mRecentLoaderResults.values()) {
-                    allInteractions.addAll(loaderInteractions);
-                }
-
                 // Sort the interactions by most recent
                 Collections.sort(allInteractions, new Comparator<ContactInteraction>() {
                     @Override
                     public int compare(ContactInteraction a, ContactInteraction b) {
-                        return a.getInteractionDate() >= b.getInteractionDate() ? -1 : 1;
+                        if (a == null && b == null) {
+                            return 0;
+                        }
+                        if (a == null) {
+                            return 1;
+                        }
+                        if (b == null) {
+                            return -1;
+                        }
+                        if (a.getInteractionDate() > b.getInteractionDate()) {
+                            return -1;
+                        }
+                        if (a.getInteractionDate() == b.getInteractionDate()) {
+                            return 0;
+                        }
+                        return 1;
                     }
                 });
 
@@ -2126,9 +2223,13 @@ public class QuickContactActivity extends ContactsActivity {
     }
 
     private Intent getEditContactIntent() {
-        final Intent intent = new Intent(Intent.ACTION_EDIT, mContactData.getLookupUri());
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_WHEN_TASK_RESET);
-        return intent;
+        return EditorIntents.createCompactEditContactIntent(
+                mContactData.getLookupUri(),
+                mHasComputedThemeColor
+                        ? new MaterialPalette(mColorFilterColor, mStatusBarColor) : null,
+                /* updatedPhotos =*/ null,
+                mContactData.getPhotoId(),
+                mContactData.getNameRawContactId());
     }
 
     private void editContact() {
@@ -2169,35 +2270,9 @@ public class QuickContactActivity extends ContactsActivity {
         }
     }
 
-    /**
-     * Calls into the contacts provider to get a pre-authorized version of the given URI.
-     */
-    private Uri getPreAuthorizedUri(Uri uri) {
-        final Bundle uriBundle = new Bundle();
-        uriBundle.putParcelable(ContactsContract.Authorization.KEY_URI_TO_AUTHORIZE, uri);
-        final Bundle authResponse = getContentResolver().call(
-                ContactsContract.AUTHORITY_URI,
-                ContactsContract.Authorization.AUTHORIZATION_METHOD,
-                null,
-                uriBundle);
-        if (authResponse != null) {
-            return (Uri) authResponse.getParcelable(
-                    ContactsContract.Authorization.KEY_AUTHORIZED_URI);
-        } else {
-            return uri;
-        }
-    }
-
     private void shareContact() {
         final String lookupKey = mContactData.getLookupKey();
-        Uri shareUri = Uri.withAppendedPath(Contacts.CONTENT_VCARD_URI, lookupKey);
-        if (mContactData.isUserProfile()) {
-            // User is sharing the profile.  We don't want to force the receiver to have
-            // the highly-privileged READ_PROFILE permission, so we need to request a
-            // pre-authorized URI from the provider.
-            shareUri = getPreAuthorizedUri(shareUri);
-        }
-
+        final Uri shareUri = Uri.withAppendedPath(Contacts.CONTENT_VCARD_URI, lookupKey);
         final Intent intent = new Intent(Intent.ACTION_SEND);
         intent.setType(Contacts.CONTENT_VCARD_TYPE);
         intent.putExtra(Intent.EXTRA_STREAM, shareUri);
@@ -2208,7 +2283,7 @@ public class QuickContactActivity extends ContactsActivity {
 
         try {
             mHasIntentLaunched = true;
-            this.startActivity(chooseIntent);
+            ImplicitIntentsUtil.startActivityOutsideApp(this, chooseIntent);
         } catch (final ActivityNotFoundException ex) {
             Toast.makeText(this, R.string.share_error, Toast.LENGTH_SHORT).show();
         }
@@ -2240,6 +2315,10 @@ public class QuickContactActivity extends ContactsActivity {
     }
 
     private boolean isShortcutCreatable() {
+        if (mContactData == null || mContactData.isUserProfile() ||
+                mContactData.isDirectoryEntry()) {
+            return false;
+        }
         final Intent createShortcutIntent = new Intent();
         createShortcutIntent.setAction(ACTION_INSTALL_SHORTCUT);
         final List<ResolveInfo> receivers = getPackageManager()
@@ -2284,6 +2363,9 @@ public class QuickContactActivity extends ContactsActivity {
 
             final MenuItem shortcutMenuItem = menu.findItem(R.id.menu_create_contact_shortcut);
             shortcutMenuItem.setVisible(isShortcutCreatable());
+
+            final MenuItem helpMenu = menu.findItem(R.id.menu_help);
+            helpMenu.setVisible(HelpUtils.isHelpAndFeedbackAvailable());
 
             return true;
         }
@@ -2337,10 +2419,10 @@ public class QuickContactActivity extends ContactsActivity {
                     // account.
                     if (mContactData.getDirectoryExportSupport() ==
                             Directory.EXPORT_SUPPORT_SAME_ACCOUNT_ONLY) {
-                        intent.putExtra(Intents.Insert.ACCOUNT,
+                        intent.putExtra(Intents.Insert.EXTRA_ACCOUNT,
                                 new Account(mContactData.getDirectoryAccountName(),
                                         mContactData.getDirectoryAccountType()));
-                        intent.putExtra(Intents.Insert.DATA_SET,
+                        intent.putExtra(Intents.Insert.EXTRA_DATA_SET,
                                 mContactData.getRawContacts().get(0).getDataSet());
                     }
 
@@ -2357,13 +2439,22 @@ public class QuickContactActivity extends ContactsActivity {
                 }
                 return true;
             case R.id.menu_delete:
-                deleteContact();
+                if (isContactEditable()) {
+                    deleteContact();
+                }
                 return true;
             case R.id.menu_share:
-                shareContact();
+                if (isContactShareable()) {
+                    shareContact();
+                }
                 return true;
             case R.id.menu_create_contact_shortcut:
-                createLauncherShortcutWithContact();
+                if (isShortcutCreatable()) {
+                    createLauncherShortcutWithContact();
+                }
+                return true;
+            case R.id.menu_help:
+                HelpUtils.launchHelpAndFeedbackForContactScreen(this);
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
