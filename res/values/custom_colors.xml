@@ -19,4 +19,6 @@
     <color name="editor_account_header_bg">#ffeeeeee</color>
     <color name="selection_close_tint">#ffffffff</color>
     <color name="list_item_name_text_color">#ff000000</color>
+    <color name="white">@android:color/white</color>
+    <color name="edit_kind_text_appearance_text_color">#363636</color>
 </resources>

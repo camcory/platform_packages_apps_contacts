@@ -142,10 +142,10 @@
     </style>
 
     <style name="ContactPickerSearchTheme" parent="@style/PeopleTheme">
-        <item name="android:textColorPrimary">@android:color/white</item>
+        <item name="android:textColorPrimary">@color/text_color_white</item>
         <item name="android:textColorHint">?android:textColorHintInverse</item>
         <item name="android:colorControlActivated">?android:textColorHintInverse</item>
-        <item name="android:colorControlNormal">@android:color/white</item>
+        <item name="android:colorControlNormal">@color/white</item>
     </style>
 
     <!-- Text in the action bar at the top of the screen -->
@@ -309,7 +309,7 @@
         <item name="android:textSize">14sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textAllCaps">true</item>
-        <item name="android:textColor">#363636</item>
+        <item name="android:textColor">@color/edit_kind_text_appearance_text_color</item>
         <item name="android:fontFamily">sans-serif</item>
     </style>
 
