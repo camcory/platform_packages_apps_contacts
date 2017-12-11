@@ -348,7 +348,7 @@ public class PeopleActivity extends AppCompatContactsActivity implements
         }
 
         // Make sure this is *before* calling super.onCreate
-        setTheme(R.style.PeopleActivityTheme);
+        //setTheme(R.style.PeopleActivityTheme);
         super.onCreate(savedState);
 
         mAccountTypeManager = AccountTypeManager.getInstance(this);

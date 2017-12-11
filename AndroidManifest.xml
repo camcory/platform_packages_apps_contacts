@@ -75,7 +75,7 @@
             android:alwaysRetainTaskState="true"
             android:launchMode="singleTop"
             android:resizeableActivity="true"
-            android:theme="@style/LaunchScreenTheme"
+            android:theme="@style/PeopleActivityTheme"
             android:visibleToInstantApps="true"
             >
             <intent-filter>
