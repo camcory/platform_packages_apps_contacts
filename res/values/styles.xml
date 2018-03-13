@@ -40,6 +40,8 @@
     </style>
 
     <style name="PeopleTheme" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:navigationBarColor">@color/navigation_bar_color</item>
+        <item name="android:windowLightNavigationBar">@bool/windowLightNavigationBar</item>
         <item name="android:actionBarStyle">@style/ContactsActionBarStyle</item>
         <!-- Style for the overflow button in the actionbar. -->
         <item name="android:actionOverflowButtonStyle">@style/ContactsActionBarOverflowQP</item>
@@ -97,6 +99,8 @@
     </style>
 
     <style name="PeopleActivityTheme" parent="@style/PeopleThemeAppCompat">
+        <item name="android:navigationBarColor">@color/navigation_bar_color</item>
+        <item name="android:windowLightNavigationBar">@bool/windowLightNavigationBar</item>
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:listSelector">?android:attr/listChoiceBackgroundIndicator</item>

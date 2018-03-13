@@ -18,4 +18,5 @@
     <bool name="quickcontact_two_panel">false</bool>
     <bool name="contacteditor_two_panel">false</bool>
 
+    <bool name="windowLightNavigationBar">true</bool>
 </resources>
